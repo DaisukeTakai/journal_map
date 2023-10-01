@@ -78,7 +78,8 @@
         svg.call(zoom);
         // Function to style the tooltip
         var styleTooltip = function (name, description, inDegree) {
-            return "<p class='name'>PMID " + name + "</p><p class='description'>" + description + "</p><p class='in-degree'>グラフ内被引用数 " + inDegree + "</p>";
+            const truncatedDescription = description.length > 800 ? description.substring(0, 800) + "..." : description;
+            return "<p class='name'>PMID " + name + "</p><p class='description'>" + truncatedDescription + "</p><p class='in-degree'>グラフ内被引用数 " + inDegree + "</p>";
         };
         var render = new dagreD3.render();
         render(inner, g);
@@ -151,11 +152,7 @@
             //     .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); });
 
             inner.selectAll("g.node")
-                .attr("title", function (v) {
-                    const description = g.node(v).description;
-                    const truncatedDescription = description.length > 1000 ? description.substring(0, 1800) + "..." : description;
-                    return styleTooltip(v, truncatedDescription, g.node(v).inDegree);
-                })
+                .attr("title", function (v) { return styleTooltip(v, g.node(v).description, g.node(v).inDegree); })
                 .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); });
 
 
