@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 
 <head>
     <meta charset="UTF-8">
@@ -14,7 +14,7 @@
 
 <body>
     <h2>
-        <input type="text" id="pmidInput" size="10" placeholder="PubMed ID" value="29787304">
+        <input type="text" id="pmidInput" size="10" placeholder="PubMed ID" value="33627160">
         <button onclick="fetchPubMedData()">追加</button>
     </h2>
 
@@ -71,6 +71,7 @@
 
     <script>
         var g = new dagreD3.graphlib.Graph().setGraph({});
+        g.graph().ranksep = 200;
 
         var svg = d3.select("svg");
         var inner = svg.append("g");
@@ -102,72 +103,114 @@
         updateSvgSize();
 
         async function fetchPubMedData() {
-            const pmid = document.getElementById("pmidInput").value;
-            const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pubmed&linkname=pubmed_pubmed_refs&id=${pmid}`;
-            g.setNode(pmid, {
-                description: "start", style: "fill: #f77"
-            })
+            const pmidInput = document.getElementById("pmidInput").value;
+            let pmidList = pmidInput.split(",").map(id => id.trim());
+
+            const maxIterations = 5;
+            let prePmidList = [];
+
+            for (let i = 0; i < maxIterations; i++) {
+                console.log(`Iteration ${i + 1}:`);
+                console.log("PubMed IDs:", pmidList.join(", "));
+
+                await processPubMedData(pmidList);
+
+                const newPmidList = g.nodes()
+                    .sort((a, b) => b - a)
+                    .slice(0, 30);
+
+                // 孫引きから新たに取得したPubMed IDがなければ繰り返しを終了します
+                if (newPmidList === prePmidList) {
+                    console.log("No new PubMed IDs found. Stopping iteration.");
+                    break;
+                };
+
+                pmidList = g.nodes()
+                    .sort((a, b) => b - a)
+                    .slice(0, 30);
+
+                prePmidList = newPmidList;
+            }
+
+            g.nodes().forEach((nodeId) => {
+                const inEdges = g.inEdges(nodeId);
+                const inDegree = inEdges ? inEdges.length : 0;
+                g.node(nodeId).inDegree = inDegree;
+            });
+
+            // ノードをin-degreeの多い順にソート
+            const sortedNodes = g.nodes().sort((a, b) => g.node(b).inDegree - g.node(a).inDegree);
+
+            // 上位30件以外のノード（ただしpmidは残す）を削除
+            for (let i = 0; i < sortedNodes.length; i++) {
+                const nodeId = sortedNodes[i];
+                if (!pmidList.includes(nodeId) && i >= 15) {
+                    g.removeNode(nodeId);
+                    g.edges().forEach((edge) => {
+                        if (edge.v === nodeId || edge.w === nodeId) {
+                            g.removeEdge(edge);
+                        }
+                    });
+                }
+            }
+
+            // グラフを再描画
+            render(inner, g);
+
+            inner.selectAll("g.node")
+                .attr("title", function (v) { return styleTooltip(v, g.node(v).description, g.node(v).inDegree) })
+                .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); })
+
+            var initialScale = 1;
+            svg.call(zoom.transform, d3.zoomIdentity.scale(initialScale));
+            // svg.call(zoom.transform, d3.zoomIdentity.translate((svg.attr("width") - g.graph().width * initialScale) / 2, (svg.attr("height") - g.graph().height * initialScale) / 2).scale(initialScale));
+
+            svg.attr('height', '100%');
+            svg.attr('y', window.innerHeight / 2); // 垂直方向に中央に配置
+
+        }
+
+        async function processPubMedData(pmidList) {
+            const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${pmidList.join(",")}`;
 
             try {
                 const response = await fetch(url);
                 const data = await response.text();
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(data, "text/xml");
-                const linkElements = xmlDoc.querySelectorAll("LinkSetDb > Link");
+                const pubmedArticles = xmlDoc.querySelectorAll("PubmedArticle");
 
+                pubmedArticles.forEach((article) => {
+                    const pmid = article.querySelector("PubmedData > ArticleIdList > ArticleId[IdType='pubmed']").textContent;
+                    const articleTitle = article.querySelector("MedlineCitation > Article > ArticleTitle").textContent;
 
-                // 子ノードのPubMed IDを収集
-                const childPMIDs = Array.from(linkElements, (linkElement) => linkElement.querySelector("Id").textContent);
-                const childPMIDString = childPMIDs.join(",");
+                    g.setNode(pmid, {
+                        description: articleTitle, style: "fill: #f77"
+                    })
 
-                console.error(childPMIDString);
+                    const referenceElements = article.querySelectorAll("PubmedData > ReferenceList > Reference");
 
-                // 新しいPubMed IDをノードに追加
-                linkElements.forEach((linkElement) => {
-                    const pubmedID = linkElement.querySelector("Id").textContent;
-                    const newNode = {
-                        description: "新しいPubMed論文"
-                    };
-                    g.setNode(pubmedID, newNode);
+                    if (referenceElements.length > 0) {
+                        referenceElements.forEach((referenceElement) => {
+                            const pubmedIDElement = referenceElement.querySelector("ArticleIdList > ArticleId[IdType='pubmed']");
+                            const referenceCitation = referenceElement.querySelector("Citation").textContent;
+                            if (pubmedIDElement) {
+                                const pubmedID = pubmedIDElement.textContent;
+                                const newNode = {
+                                    description: referenceCitation
+                                };
 
-                    // グラフにエッジを追加（任意の親ノードに接続）
-                    g.setEdge(pmid, pubmedID, { label: "" });
-                });
-
-                g.nodes().forEach((nodeId) => {
-                    const inEdges = g.inEdges(nodeId);
-                    const inDegree = inEdges ? inEdges.length : 0;
-                    g.node(nodeId).inDegree = inDegree;
-                });
-
-                // ノードをin-degreeの多い順にソート
-                const sortedNodes = g.nodes().sort((a, b) => g.node(b).inDegree - g.node(a).inDegree);
-
-                // 上位30件以外のノード（ただしpmidは残す）を削除
-                for (let i = 0; i < sortedNodes.length; i++) {
-                    const nodeId = sortedNodes[i];
-                    if (nodeId !== pmid && i >= 30) {
-                        g.removeNode(nodeId);
-                        g.edges().forEach((edge) => {
-                            if (edge.v === nodeId || edge.w === nodeId) {
-                                g.removeEdge(edge);
+                                g.setNode(pubmedID, newNode);
+                                g.setEdge(pmid, pubmedID, { label: "" });
                             }
                         });
+
+                    } else {
+                        // 引用文が存在しない場合にメッセージを表示
+                        console.log(`<p>${pmid} の参考文献は見つかりませんでした。</p>`);
                     }
-                }
-
-                // グラフを再描画
-                render(inner, g);
-                inner.selectAll("g.node")
-                    .attr("title", function (v) { return styleTooltip(v, g.node(v).description, g.node(v).inDegree) })
-                    .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); })
-
-                var initialScale = 2;
-                svg.call(zoom.transform, d3.zoomIdentity.translate((svg.attr("width") - g.graph().width * initialScale) / 2, (svg.attr("height") - g.graph().height * initialScale) / 2).scale(initialScale));
-
-                svg.attr('height', '100%');
-                svg.attr('y', (window.innerHeight - g.graph().height * initialScale) / 2); // 垂直方向に中央に配置
-
+                });
+                console.log("収集成功")
 
             } catch (error) {
                 console.error("データの取得中にエラーが発生しました: " + error);
