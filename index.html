@@ -10,18 +10,10 @@
     <link rel="stylesheet" href="tipsy.css">
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
     <script src="tipsy.js"></script>
-</head>
-
-<body>
-    <h2>
-        <input type="text" id="pmidInput" size="10" placeholder="PubMed ID" value="33627160">
-        <button onclick="fetchPubMedData()">追加</button>
-    </h2>
-
     <style id="css">
         text {
             font-weight: 300;
-            font-family: "Helvetica Neue", Helvetica, Arial, sans-serf;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
             font-size: 14px;
         }
 
@@ -42,57 +34,54 @@
 
         /* This styles the title of the tooltip */
         .tipsy .name {
-            font-size: 1.5em;
-            font-weight: bold;
+            font-size: 1.2em;
             color: #60b1fc;
             margin: 0;
         }
 
         /* This styles the body of the tooltip */
         .tipsy .description {
-            font-size: 1.2em;
+            font-size: 1.5em;
         }
 
         svg {
-            border: none;
-            outline: none;
             height: 100vh;
             width: 100%;
         }
 
         h2 {
             position: absolute;
-            top: 20px;
-            left: 20px;
+            top: 0px;
+            left: 10px;
         }
     </style>
+</head>
 
-    <svg width="1200" height="720"></svg>
-
+<body>
+    <h1>
+        <input type="text" id="pmidInput" size="20" placeholder="PubMed ID" value="33627160">
+        <button onclick="fetchPubMedData()">グラフ生成</button>
+    </h1>
+    <svg width="100%" height="100%"></svg>
     <script>
         var g = new dagreD3.graphlib.Graph().setGraph({});
         g.graph().ranksep = 300;
         g.graph().nodesep = 80;
         g.graph().edgesep = 30;
-
         var svg = d3.select("svg");
         var inner = svg.append("g");
-
         // Set up zoom support
         var zoom = d3.zoom()
             .on("zoom", function () {
                 inner.attr("transform", d3.event.transform);
             });
         svg.call(zoom);
-
         // Function to style the tooltip
         var styleTooltip = function (name, description, inDegree) {
-            return "<p class='name'>PMID " + name + "</p><p class='description'>" + description + "</p><p class='in-degreen'>グラフ内被引用数 " + inDegree + "</p>";
+            return "<p class='name'>PMID " + name + "</p><p class='description'>" + description + "</p><p class='in-degree'>グラフ内被引用数 " + inDegree + "</p>";
         };
-
         var render = new dagreD3.render();
         render(inner, g);
-
         function updateSvgSize() {
             const svg = d3.select("svg");
             const windowHeight = window.innerHeight;
@@ -100,54 +89,40 @@
             svg.attr("height", windowHeight);
             svg.attr("width", windowWidth);
         }
-
         window.addEventListener("resize", updateSvgSize);
         updateSvgSize();
-
         async function fetchPubMedData() {
             const pmidInput = document.getElementById("pmidInput").value;
             const pmidList = pmidInput.split(",").map(id => id.trim());
-
             // 繰り返す回数・取ってくる論文数を決める
             const maxIterations = 4;
             const getJournalsCount = 30;
-
             let tempPmidList = [];
             let prePmidList = [];
-
             await processPubMedData(pmidList);
-
             for (let i = 0; i < maxIterations; i++) {
                 tempPmidList = g.nodes()
                     .sort((a, b) => b - a)
                     .slice(0, getJournalsCount);
-
                 await processPubMedData(tempPmidList);
-
                 const newPmidList = g.nodes()
                     .sort((a, b) => b - a)
                     .slice(0, getJournalsCount);
-
                 // 孫引きリストに新規のPubMed IDがなければ終了
                 if (JSON.stringify(newPmidList) === JSON.stringify(prePmidList)) {
                     console.log("No new PubMed IDs found. Stopping iteration.");
                     break;
                 };
-
                 prePmidList = newPmidList;
             };
-
             // グラフ内被引用数上位50件以外（はじめのpmidは残す）を削除
-            const remainingNodesCount = 50
-
+            const remainingNodesCount = 50;
             g.nodes().forEach((nodeId) => {
                 const inEdges = g.inEdges(nodeId);
                 const inDegree = inEdges ? inEdges.length : 0;
                 g.node(nodeId).inDegree = inDegree;
             });
-
             const sortedNodes = g.nodes().sort((a, b) => g.node(b).inDegree - g.node(a).inDegree);
-
             for (let i = 0; i < sortedNodes.length; i++) {
                 const nodeId = sortedNodes[i];
                 if (!pmidList.includes(nodeId) && i >= remainingNodesCount) {
@@ -159,66 +134,62 @@
                     });
                 }
             };
-
             // 結果的に次数が0のノードを削除
             g.nodes().forEach((nodeId) => {
                 const inEdges = g.inEdges(nodeId);
                 const outEdges = g.outEdges(nodeId);
                 const degree = inEdges.length + outEdges.length;
-
                 if (degree === 0) {
                     g.removeNode(nodeId);
                 }
             });
-
             // グラフを再描画
             render(inner, g);
-
             // グラフにtooltipを追加
+            // inner.selectAll("g.node")
+            //     .attr("title", function (v) { return styleTooltip(v, g.node(v).description, g.node(v).inDegree) })
+            //     .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); });
+
             inner.selectAll("g.node")
-                .attr("title", function (v) { return styleTooltip(v, g.node(v).description, g.node(v).inDegree) })
+                .attr("title", function (v) {
+                    const description = g.node(v).description;
+                    const truncatedDescription = description.length > 1000 ? description.substring(0, 1800) + "..." : description;
+                    return styleTooltip(v, truncatedDescription, g.node(v).inDegree);
+                })
                 .each(function (v) { $(this).tipsy({ gravity: "w", opacity: 1, html: true }); });
+
 
             // 画面・グラフの大きさ取得
             const graphWidth = g.graph().width;
             const graphHeight = g.graph().height;
             const windowWidth = window.innerWidth;
             const windowHeight = window.innerHeight;
-
             // グラフを画面の幅と高さの0.95倍にスケール
             const scaleX = 0.95 * windowWidth / graphWidth;
             const scaleY = 0.95 * windowHeight / graphHeight;
-
             // スケールが大きい方を選択して、グラフを画面中央に配置
             const scale = Math.min(scaleX, scaleY);
             const translateX = (windowWidth - graphWidth * scale) / 2;
             const translateY = (windowHeight - graphHeight * scale) / 2;
             const transform = d3.zoomIdentity.translate(translateX, translateY).scale(scale);
-
             // トランスフォームを適用してグラフを表示
             svg.call(zoom.transform, transform);
         }
-
         async function processPubMedData(pmidList) {
             const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${pmidList.join(",")}`;
-
             try {
                 const response = await fetch(url);
                 const data = await response.text();
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(data, "text/xml");
                 const pubmedArticles = xmlDoc.querySelectorAll("PubmedArticle");
-
                 pubmedArticles.forEach((article) => {
                     const pmid = article.querySelector("PubmedData > ArticleIdList > ArticleId[IdType='pubmed']").textContent;
                     const articleTitle = article.querySelector("MedlineCitation > Article > ArticleTitle").textContent;
-
                     g.setNode(pmid, {
                         description: articleTitle, style: "fill: #f77"
                     })
-
                     const referenceElements = article.querySelectorAll("PubmedData > ReferenceList > Reference");
-
                     if (referenceElements.length > 0) {
                         referenceElements.forEach((referenceElement) => {
                             const pubmedIDElement = referenceElement.querySelector("ArticleIdList > ArticleId[IdType='pubmed']");
@@ -228,19 +199,16 @@
                                 const newNode = {
                                     description: referenceCitation
                                 };
-
                                 g.setNode(pubmedID, newNode);
                                 g.setEdge(pmid, pubmedID, { label: "" });
                             }
                         });
-
                     } else {
                         // 引用文が存在しない場合にメッセージを表示
                         console.log(`<p>${pmid} の参考文献は見つかりませんでした。</p>`);
                     }
                 });
                 console.log("収集成功")
-
             } catch (error) {
                 console.error("データの取得中にエラーが発生しました: " + error);
             }
